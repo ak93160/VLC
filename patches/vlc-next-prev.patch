@@ -1,0 +1,183 @@
+diff --git a/CUSTOM_CHANGES.md b/CUSTOM_CHANGES.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..5f9cff4489b59b2c54c71dda5515db6bf7c9dfb3
+--- /dev/null
++++ b/CUSTOM_CHANGES.md
+@@ -0,0 +1,18 @@
++# Custom VLC Android source changes
++
++This archive keeps the original VLC theme system unchanged and contains only the following custom video-navigation changes:
++
++1. The in-player Previous and Next video buttons are visible even when the service starts with a one-item playlist.
++2. Previous/Next use the active VLC playlist when possible. If VLC was opened with a single local `file://` video, the player builds a naturally sorted queue from indexed videos in the same folder and switches to the adjacent item.
++
++## Navigation limitations
++
++The automatic same-folder fallback uses the VLC media library's indexed video list and currently targets local `file://` media. SAF `content://`, remote/network streams, and files not indexed by the media library continue to rely on the playlist supplied by VLC or the launching app.
++
++## Theme behaviour
++
++The added five-colour theme selector has been removed. Original VLC theme settings, styling, and theme-selection behaviour are restored from the master source archive.
++
++## Build note
++
++This is a source archive, not a compiled APK. The supplied upstream archive does not contain the complete VLC native engine build checkout/artifacts, so the Android build must be configured with VLC's required native LibVLC/medialibrary dependencies before a full APK build can succeed.
+diff --git a/application/resources/src/main/res/values/strings.xml b/application/resources/src/main/res/values/strings.xml
+index 58cbe1731a85e8b6c0ee18a2fe52b309fbc1b6cc..31c2e2c58332e819790191546c966933fa47dde9 100644
+--- a/application/resources/src/main/res/values/strings.xml
++++ b/application/resources/src/main/res/values/strings.xml
+@@ -378,6 +378,10 @@
+     <string name="subtitle_text_encoding">Subtitle text encoding</string>
+     <string name="subtitle_preferred_language">Preferred subtitle language</string>
+     <string name="daynight_title">DayNight mode</string>
++    <string name="no_next_video_in_folder">No next video in this folder</string>
++    <string name="no_previous_video_in_folder">No previous video in this folder</string>
++    <string name="no_next_video_available">No next video available in this playlist</string>
++    <string name="no_previous_video_available">No previous video available in this playlist</string>
+     <string name="daynight_follow_system_title">Follow system mode</string>
+     <string name="no_track_preference">No language preference</string>
+     <string name="track_preference">Track preference: %s</string>
+diff --git a/application/vlc-android/res/layout/player_hud.xml b/application/vlc-android/res/layout/player_hud.xml
+index 1ba9c0f4122a0bdefad118b3fb76a72e9c76c195..45c2294f4af8057aa1b8f77ab1fefcd8f9f4495a 100644
+--- a/application/vlc-android/res/layout/player_hud.xml
++++ b/application/vlc-android/res/layout/player_hud.xml
+@@ -372,7 +372,7 @@
+                     android:longClickable="true"
+                     android:onClick="@{(v) -> player.previous()}"
+                     android:scaleType="center"
+-                    android:visibility="gone"
++                    android:visibility="visible"
+                     tools:visibility="visible"
+                     vlc:layout_constraintBottom_toBottomOf="@+id/player_overlay_play"
+                     vlc:layout_constraintEnd_toStartOf="@+id/player_overlay_rewind"
+@@ -478,7 +478,7 @@
+                     android:longClickable="true"
+                     android:onClick="@{(v) -> player.next()}"
+                     android:scaleType="center"
+-                    android:visibility="gone"
++                    android:visibility="visible"
+                     tools:visibility="visible"
+                     vlc:layout_constraintBottom_toBottomOf="@+id/player_overlay_play"
+                     vlc:layout_constraintEnd_toStartOf="@+id/player_space_right"
+diff --git a/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerActivity.kt b/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerActivity.kt
+index 79293d8faf3e5b18b25bfddd338bc0a5923d5d4a..7e3208bc98460cb220dd7bcb4f22a1dc06080909 100644
+--- a/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerActivity.kt
++++ b/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerActivity.kt
+@@ -1443,18 +1443,78 @@ open class VideoPlayerActivity : AppCompatActivity(), PlaybackService.Callback,
+     }
+ 
+     override fun next() {
+-        if (service?.hasNext() == true) {
+-            service?.next()
++        val activeService = service ?: return
++        if (activeService.hasNext()) {
++            activeService.next()
+             overlayDelegate.showInfo(getString(R.string.next), 1000)
+             overlayDelegate.showOverlay()
++        } else {
++            navigateVideoInCurrentFolder(1)
+         }
+     }
+ 
+     override fun previous() {
+-        service?.let { service ->
+-            service.previous(false)
++        val activeService = service ?: return
++        if (activeService.hasPrevious()) {
++            activeService.previous(true)
+             overlayDelegate.showInfo(getString(R.string.previous), 1000)
+             overlayDelegate.showOverlay()
++        } else {
++            navigateVideoInCurrentFolder(-1)
++        }
++    }
++
++    /**
++     * File-manager launches often give VLC a one-item playlist. When that happens,
++     * use the media library to build a naturally sorted queue from the same local
++     * folder so the on-screen Previous/Next buttons can move between sibling videos.
++     * SAF/network/stream items keep the normal VLC playlist behavior.
++     */
++    private fun navigateVideoInCurrentFolder(direction: Int) {
++        val activeService = service ?: return
++        val current = activeService.currentMediaWrapper ?: return
++        lifecycleScope.launch {
++            val queueData = withContext(Dispatchers.IO) {
++                // MediaStore launches can arrive as content:// URIs. Resolve those
++                // back to the media-library file URI when Android exposes a path.
++                val queueCurrent = if (current.uri.scheme == "content") {
++                    val resolved = FileUtils.getPathFromURI(current.uri)
++                    if (resolved.startsWith("file://")) medialibrary.getMedia(resolved.toUri()) ?: current else current
++                } else current
++                val localUri = queueCurrent.uri.takeIf { it.scheme == "file" }
++                    ?: return@withContext Pair(null, emptyList<MediaWrapper>())
++                val currentParent = FileUtils.getParent(localUri.toString())
++                    ?: return@withContext Pair(null, emptyList<MediaWrapper>())
++                val videos = medialibrary.getVideos()
++                    .filter { it.uri.scheme == "file" && FileUtils.getParent(it.uri.toString()) == currentParent }
++                    .distinctBy { it.uri.toString() }
++                    .toMutableList()
++                if (videos.none { it.uri == localUri }) videos.add(queueCurrent)
++                Pair(localUri, videos.sortedBy { it.uri.lastPathSegment?.lowercase().orEmpty() })
++            }
++            val currentPlaylistUri = queueData.first
++            val siblingVideos = queueData.second
++            if (currentPlaylistUri == null) {
++                Toast.makeText(
++                    this@VideoPlayerActivity,
++                    if (direction > 0) R.string.no_next_video_available else R.string.no_previous_video_available,
++                    Toast.LENGTH_SHORT
++                ).show()
++                return@launch
++            }
++            val currentIndex = siblingVideos.indexOfFirst { it.uri == currentPlaylistUri }
++            val targetIndex = currentIndex + direction
++            if (currentIndex < 0 || targetIndex !in siblingVideos.indices) {
++                Toast.makeText(
++                    this@VideoPlayerActivity,
++                    if (direction > 0) R.string.no_next_video_in_folder else R.string.no_previous_video_in_folder,
++                    Toast.LENGTH_SHORT
++                ).show()
++                return@launch
++            }
++            activeService.load(siblingVideos, targetIndex)
++            overlayDelegate.showInfo(getString(if (direction > 0) R.string.next else R.string.previous), 1000)
++            overlayDelegate.showOverlay()
+         }
+     }
+ 
+diff --git a/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerOverlayDelegate.kt b/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerOverlayDelegate.kt
+index 66e3b10c0e431e735fab190e85d12cd075c4fe00..edc8784b75fe94f3dae6c2f0cd7b463548eb02bc 100644
+--- a/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerOverlayDelegate.kt
++++ b/application/vlc-android/src/org/videolan/vlc/gui/video/VideoPlayerOverlayDelegate.kt
+@@ -897,11 +897,13 @@ class VideoPlayerOverlayDelegate (private val player: VideoPlayerActivity) {
+         }
+         if (player.service?.hasPlaylist() == true) {
+             hudRightBinding.playlistToggle.setVisible()
+-            if (::hudBinding.isInitialized) {
+-                hudBinding.playlistPrevious.setVisible()
+-                hudBinding.playlistNext.setVisible()
+-            }
+         } else hudRightBinding.playlistToggle.setGone()
++        // Keep video navigation buttons available even when a single video was
++        // opened from a file manager. The activity can build a folder queue on demand.
++        if (::hudBinding.isInitialized) {
++            hudBinding.playlistPrevious.setVisible()
++            hudBinding.playlistNext.setVisible()
++        }
+         hudRightBinding.playlistToggle.setOnClickListener(player)
+         closeButton.setOnClickListener { togglePlaylist() }
+         hingeArrowLeft?.setOnClickListener {
+@@ -952,10 +954,8 @@ class VideoPlayerOverlayDelegate (private val player: VideoPlayerActivity) {
+             hudBinding.playerOverlayTracks.visibility = if (show) View.VISIBLE else View.INVISIBLE
+             hudBinding.playerOverlayAdvFunction.visibility = if (show) View.VISIBLE else View.INVISIBLE
+             hudBinding.playerResize.visibility = if (show) View.VISIBLE else View.INVISIBLE
+-            if (hasPlaylist) {
+-                hudBinding.playlistPrevious.visibility = if (show) View.VISIBLE else View.INVISIBLE
+-                hudBinding.playlistNext.visibility = if (show) View.VISIBLE else View.INVISIBLE
+-            }
++            hudBinding.playlistPrevious.visibility = if (show) View.VISIBLE else View.INVISIBLE
++            hudBinding.playlistNext.visibility = if (show) View.VISIBLE else View.INVISIBLE
+             hudBinding.orientationToggle.visibility = if (player.isTv || AndroidDevices.isChromeBook) View.INVISIBLE else if (show) View.VISIBLE else View.INVISIBLE
+             if (!show) hudBinding.playerOverlaySeekbar.disableAccessibilityEvents() else hudBinding.playerOverlaySeekbar.enableAccessibilityEvents()
+         }
