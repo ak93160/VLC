@@ -64,6 +64,22 @@ jobs:
           git -C "$SRC" checkout --detach FETCH_HEAD
           git -C "$SRC" apply --check "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
           git -C "$SRC" apply "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
+
+          # Package the exact stable source tree with the custom patch applied.
+          SOURCE_PACKAGE="$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Full-Source"
+          mkdir -p "$SOURCE_PACKAGE/project/patches" "$SOURCE_PACKAGE/project/.github/workflows"
+          cp -a "$SRC" "$SOURCE_PACKAGE/source"
+          rm -rf "$SOURCE_PACKAGE/source/.git"
+          cp "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch" "$SOURCE_PACKAGE/project/patches/"
+          cp "$GITHUB_WORKSPACE/README.md" "$SOURCE_PACKAGE/project/"
+          cp "$GITHUB_WORKSPACE/.github/workflows/build-apk.yml" "$SOURCE_PACKAGE/project/.github/workflows/"
+          cat > "$SOURCE_PACKAGE/SOURCE-INFO.txt" <<'INFO'
+          Official VideoLAN VLC Android source tag: 3.7.1 (stable).
+          Customization: original VLC theme retained; Next/Previous video navigation patch applied.
+          Universal APK workflow targets ARM64, ARMv7, x86, and x86_64.
+          INFO
+          (cd "$RUNNER_TEMP" && zip -qr "$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Full-Source.zip" "VLC-Android-3.7.1-Stable-Full-Source")
+
           printf 'sdk.dir=%s\nandroid.ndkFullVersion=%s\n' "$ANDROID_HOME" "$NDK_VERSION" > "$SRC/local.properties"
           # Debug uses the published LibVLC AAR; this placeholder is only for Gradle's included Dev project.
           mkdir -p "$SRC/libvlcjni/libvlc"
@@ -115,5 +131,13 @@ jobs:
         with:
           name: VLC-Android-3.7.1-Stable-OriginalTheme-NextPrev-Universal-Debug-APK
           path: ${{ runner.temp }}/vlc-apk/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload stable full source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: VLC-Android-3.7.1-Stable-Full-Source-ZIP
+          path: ${{ runner.temp }}/VLC-Android-3.7.1-Stable-Full-Source.zip
           if-no-files-found: error
           retention-days: 14
