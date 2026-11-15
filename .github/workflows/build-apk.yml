@@ -1,0 +1,99 @@
+name: Build VLC Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'patches/**'
+      - '.github/workflows/build-apk.yml'
+      - 'README.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vlc-original-theme-nextprev-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build VLC Android Debug APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      UPSTREAM_COMMIT: 14a7422459ca809b29cad567c3a59702178cb423
+      NDK_VERSION: 21.4.7075529
+
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install \
+            'platform-tools' \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
+            "ndk;${NDK_VERSION}"
+
+      - name: Fetch pinned official VLC Android source
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="$RUNNER_TEMP/vlc-android"
+          mkdir -p "$SRC"
+          git -C "$SRC" init
+          git -C "$SRC" remote add origin https://github.com/videolan/vlc-android.git
+          git -C "$SRC" fetch --depth=1 origin "$UPSTREAM_COMMIT"
+          git -C "$SRC" checkout --detach FETCH_HEAD
+          git -C "$SRC" apply --check "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
+          git -C "$SRC" apply "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
+          printf 'sdk.dir=%s\nandroid.ndkFullVersion=%s\n' "$ANDROID_HOME" "$NDK_VERSION" > "$SRC/local.properties"
+          echo "VLC_SOURCE_DIR=$SRC" >> "$GITHUB_ENV"
+
+      - name: Set up Gradle 9.6.0
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Build debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle --no-daemon --stacktrace --max-workers=2 \
+            -p "$VLC_SOURCE_DIR" \
+            :application:app:assembleDebug
+
+      - name: Verify and stage APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_DIR="$VLC_SOURCE_DIR/application/app/build/outputs/apk"
+          mkdir -p "$RUNNER_TEMP/vlc-apk"
+          find "$APK_DIR" -type f -name '*.apk' -size +0c -print -exec cp {} "$RUNNER_TEMP/vlc-apk/" \;
+          test -n "$(find "$RUNNER_TEMP/vlc-apk" -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          (cd "$RUNNER_TEMP/vlc-apk" && sha256sum *.apk)
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VLC-Android-OriginalTheme-NextPrev-Debug-APK
+          path: ${{ runner.temp }}/vlc-apk/*.apk
+          if-no-files-found: error
+          retention-days: 14
