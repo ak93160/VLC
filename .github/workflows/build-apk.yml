@@ -111,6 +111,9 @@ jobs:
           mkdir -p "$SRC/libvlcjni/libvlc"
           printf '%s\n' '// Empty placeholder: Debug uses the published LibVLC AAR; native Dev build is not selected.' > "$SRC/libvlcjni/libvlc/build.gradle"
           echo "VLC_SOURCE_DIR=$SRC" >> "$GITHUB_ENV"
+          echo "VLC_SOURCE_ZIP=$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source.zip" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/build-diagnostics"
+          cp "$PATCH" "$RUNNER_TEMP/build-diagnostics/vlc-ai-subtitle.patch"
 
       - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
@@ -131,12 +134,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -o pipefail
           gradle --no-daemon --stacktrace --max-workers=2 \
             -PkeyStoreFile="$VLC_SIGNING_KEY" \
             -Pstorealias=androiddebugkey \
             -Pstorepwd=android \
             -p "$VLC_SOURCE_DIR" \
-            :application:app:assembleSignedRelease
+            :application:app:assembleSignedRelease 2>&1 | tee "$RUNNER_TEMP/build-diagnostics/gradle-build.log"
 
       - name: Verify stable Release version, icon, signature and all four ABIs
         shell: bash
@@ -182,6 +186,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source-ZIP
-          path: ${{ runner.temp }}/VLC-Android-3.7.1-Stable-Full-Source.zip
+          path: ${{ runner.temp }}/VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source.zip
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VLC-Stable-Gemini-Build-Diagnostics
+          path: ${{ runner.temp }}/build-diagnostics/*
+          if-no-files-found: warn
+          retention-days: 7
