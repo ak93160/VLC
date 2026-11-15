@@ -65,6 +65,9 @@ jobs:
           git -C "$SRC" apply --check "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
           git -C "$SRC" apply "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
           printf 'sdk.dir=%s\nandroid.ndkFullVersion=%s\n' "$ANDROID_HOME" "$NDK_VERSION" > "$SRC/local.properties"
+          # Gradle 9.6 requires directories for every included project. Debug uses the published LibVLC AAR, so this Dev-only project is an empty placeholder.
+          mkdir -p "$SRC/libvlcjni/libvlc"
+          printf '%s\n' '// Empty placeholder: Debug uses the published LibVLC AAR; native Dev build is not selected.' > "$SRC/libvlcjni/libvlc/build.gradle"
           echo "VLC_SOURCE_DIR=$SRC" >> "$GITHUB_ENV"
 
       - name: Set up Gradle 9.6.0
