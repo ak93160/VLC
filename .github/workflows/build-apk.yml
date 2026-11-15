@@ -50,7 +50,7 @@ jobs:
             'platform-tools' \
             'platforms;android-36' \
             'build-tools;36.0.0' \
-            "ndk:${NDK_VERSION}"
+            "ndk;${NDK_VERSION}"
 
       - name: Fetch official VLC Android stable source tag
         shell: bash
