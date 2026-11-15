@@ -83,16 +83,32 @@ jobs:
             -p "$VLC_SOURCE_DIR" \
             :application:app:assembleDebug
 
-      - name: Verify APK version and stage outputs
+      - name: Verify stable version and all four ABIs
         shell: bash
         run: |
           set -euo pipefail
           APK_DIR="$VLC_SOURCE_DIR/application/app/build/outputs/apk"
           mkdir -p "$RUNNER_TEMP/vlc-apk"
-          find "$APK_DIR" -type f -name '*.apk' -size +0c -print -exec cp {} "$RUNNER_TEMP/vlc-apk/" \;
-          test -n "$(find "$RUNNER_TEMP/vlc-apk" -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' -size +0c | sort)
+          if [ "${#APKS[@]}" -ne 1 ]; then
+            echo "Expected one universal Debug APK, found ${#APKS[@]}"
+            printf '%s\\n' "${APKS[@]}"
+            exit 1
+          fi
+          APK="${APKS[0]}"
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
+          BADGING="$("$AAPT" dump badging "$APK")"
+          echo "$BADGING" | grep -q "versionName='3.7.1'"
+          echo "$BADGING" | grep -q "package: name='org.videolan.vlc.debug'"
+          for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
+            unzip -Z -1 "$APK" | grep -q "^lib/$ABI/"
+          done
+          cp "$APK" "$RUNNER_TEMP/vlc-apk/VLC-Android-3.7.1-Stable-Universal-Debug.apk"
+          {
+            echo "Source: official videolan/vlc-android tag ${UPSTREAM_TAG}"
+            echo "ABI: arm64-v8a, armeabi-v7a, x86, x86_64"
+          } > "$RUNNER_TEMP/vlc-apk/BUILD-SOURCE.txt"
           (cd "$RUNNER_TEMP/vlc-apk" && sha256sum *.apk)
-          echo "Built from official VLC Android tag: ${UPSTREAM_TAG}" > "$RUNNER_TEMP/vlc-apk/BUILD-SOURCE.txt"
 
       - name: Upload stable universal debug APK
         uses: actions/upload-artifact@v4
