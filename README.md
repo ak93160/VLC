@@ -1,27 +1,34 @@
-# VLC Android — Stable 3.7.1 + Original Theme + Next/Previous Navigation
+# VLC Android — Stable 3.7.1 + Original Theme + Next/Previous + Gemini AI Subtitles
 
-This repository builds the customization against the official **stable VLC Android 3.7.1** source tag, not a Nightly or beta snapshot.
+This project builds against the official **VLC Android 3.7.1 stable** tag. It does not use Nightly or a moving master branch.
 
-## Included changes
+## Included features
 
-- Keep VLC's original theme system and original appearance unchanged.
-- Keep the in-player Previous and Next controls visible.
-- Use the current VLC playlist when it has adjacent items.
-- When a single local `file://` video was opened from a file manager and the playlist has no adjacent item, build a naturally sorted queue from indexed videos in the same folder.
+- Original VLC theme, appearance, and stable orange/red launcher icon.
+- In-player Previous and Next navigation. When VLC receives a one-item local file playlist, it can build a naturally sorted queue from indexed videos in the same folder.
+- **Gemini AI Subtitle Translation** from the subtitle-track options menu.
+- Hindi as the default translation language, editable target language and Gemini model.
+- External subtitle input: SRT, WebVTT, ASS, SSA.
+- Best-effort embedded text subtitle extraction through Android `MediaExtractor` for tracks the platform/container exposes as readable text samples.
+- Timestamp-preserving translated SRT output, optional original + translated lines, and SRT export.
+- Background WorkManager processing with Pause, Resume, retry, encrypted API-key storage, per-batch checkpoints, progress, elapsed time, ETA and status reporting.
 
-SAF `content://`, network streams, and videos not indexed by VLC's media library continue to use the playlist supplied by VLC or the launching app.
+## Gemini setup
 
-## Build an APK
+1. Open a video in VLC and open the subtitle-track options.
+2. Choose **AI Translate**.
+3. Enter your own Gemini API key, select an external subtitle file or extract a supported embedded text track, and choose the target language.
+4. Start translation. Progress is saved after each successful batch; use Resume after pausing or an interruption.
+5. Select **Use translated subtitle in VLC** or export the translated SRT file.
 
-1. Open the **Actions** tab in this repository.
-2. Choose **Build VLC Android Stable 3.7.1 APK**.
-3. Press **Run workflow**.
-4. Download the `VLC-Android-3.7.1-Stable-OriginalTheme-NextPrev-Universal-Debug-APK` artifact from the successful run.
+Subtitle text is sent to Google's Gemini API. The key is encrypted at rest with Android Keystore, but a key used directly by a mobile app can still be exposed on a rooted or compromised device. Use your own key and set usage limits in your Google AI project.
 
-A push to `main` that changes the patch or workflow also starts a build.
+## Subtitle limitations
 
-## Source and reproducibility
+Embedded extraction is best-effort and depends on Android's supported text extractors and the video's container/codec. Image-based tracks such as PGS and VobSub are not OCR-converted. For those tracks, select an external text subtitle file. If an embedded format does not expose an exact cue-end time, the extracted cue end is estimated, so exact synchronization cannot be guaranteed for every embedded format. External subtitle timestamps are retained as supplied.
 
-The workflow fetches the official `videolan/vlc-android` Git tag `3.7.1`, applies `patches/vlc-next-prev.patch`, and builds the debug APK. The tag is used rather than a moving Nightly/master revision. The official upstream source is fetched during the build; this repository stores only this project's custom patch and build workflow.
+## Build
 
-The workflow uses the official source's published LibVLC and medialibrary dependencies for the Debug build; it does not compile the native VLC engine from source. The resulting APK is a universal APK containing ARM64, ARMv7, x86, and x86_64 native libraries.
+Open the repository's **Actions** tab and run **Build VLC Android Stable 3.7.1 APK**, or push a change to `patches/**`, the workflow, or `README.md` on `main`. The workflow builds one universal signed Release APK with ARM64, ARMv7, x86, and x86_64 libraries and uploads a full Stable source ZIP.
+
+The CI APK uses a temporary signing key, not VideoLAN's Play Store key. It cannot be installed as an update over the official Play Store VLC app without first uninstalling the app that has the different signature.
