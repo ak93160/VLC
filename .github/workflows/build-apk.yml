@@ -1,4 +1,4 @@
-name: Build VLC Android Stable 3.7.1 APK
+name: Build VLC Android Stable 3.7.1 with Gemini AI Subtitles
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - 'patches/**'
+      - 'patch-parts/**'
       - '.github/workflows/build-apk.yml'
       - 'README.md'
 
@@ -14,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: vlc-stable-3-7-1-original-theme-nextprev-build
+  group: vlc-stable-3-7-1-gemini-ai-subtitle-build
   cancel-in-progress: true
 
 jobs:
@@ -52,7 +53,7 @@ jobs:
             'build-tools;36.0.0' \
             "ndk;${NDK_VERSION}"
 
-      - name: Fetch official VLC Android stable source tag
+      - name: Fetch official VLC Android stable source and apply AI subtitle patch
         shell: bash
         run: |
           set -euo pipefail
@@ -62,29 +63,48 @@ jobs:
           git -C "$SRC" remote add origin https://github.com/videolan/vlc-android.git
           git -C "$SRC" fetch --depth=1 origin "refs/tags/${UPSTREAM_TAG}"
           git -C "$SRC" checkout --detach FETCH_HEAD
-          git -C "$SRC" apply --check "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
-          git -C "$SRC" apply "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
+          # Reassemble the exact gzip/base64 patch from sorted source-control chunks.
+          PATCH_B64="$RUNNER_TEMP/vlc-ai-subtitle.patch.gz.b64"
+          PATCH="$RUNNER_TEMP/vlc-ai-subtitle.patch"
+          : > "$PATCH_B64"
+          PART_COUNT=0
+          for PART in "$GITHUB_WORKSPACE"/patch-parts/ai-patch-*.txt; do
+            cat "$PART" >> "$PATCH_B64"
+            PART_COUNT=$((PART_COUNT + 1))
+          done
+          test "$PART_COUNT" -eq 25
+          base64 --decode "$PATCH_B64" | gzip -dc > "$PATCH"
+          test -s "$PATCH"
+          git -C "$SRC" apply --check "$PATCH"
+          git -C "$SRC" apply "$PATCH"
 
           # Use the stable Release launcher assets (orange/red cone), not the green Debug flavor.
           grep -q '@color/orange500' "$SRC/application/resources/src/main/res/drawable/ic_launcher_foreground.xml"
+          test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
+          test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslationWorker.kt"
+          test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/GeminiSubtitleClient.kt"
+          test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/GeminiApiKeyStore.kt"
           # Keep Release as one universal APK rather than four ABI split APKs.
           sed -i 's/enable = isReleaseBuild/enable = false/' "$SRC/application/app/build.gradle"
 
           # Package the exact stable source tree with the custom patch applied.
-          SOURCE_PACKAGE="$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Full-Source"
+          SOURCE_PACKAGE="$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source"
           mkdir -p "$SOURCE_PACKAGE/project/patches" "$SOURCE_PACKAGE/project/.github/workflows"
           cp -a "$SRC" "$SOURCE_PACKAGE/source"
           rm -rf "$SOURCE_PACKAGE/source/.git"
-          cp "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch" "$SOURCE_PACKAGE/project/patches/"
+          cp "$PATCH" "$SOURCE_PACKAGE/project/patches/vlc-ai-subtitle.patch"
           cp "$GITHUB_WORKSPACE/README.md" "$SOURCE_PACKAGE/project/"
           cp "$GITHUB_WORKSPACE/.github/workflows/build-apk.yml" "$SOURCE_PACKAGE/project/.github/workflows/"
           cat > "$SOURCE_PACKAGE/SOURCE-INFO.txt" <<'INFO'
           Official VideoLAN VLC Android source tag: 3.7.1 (stable).
           Build variant: signedRelease (stable orange/red launcher icon; not green Debug flavor).
-          Customization: original VLC theme retained; Next/Previous video navigation patch applied.
+          Customization: original VLC theme; Next/Previous navigation; Gemini AI subtitle translation.
+          External subtitles: SRT, WebVTT, ASS and SSA; best-effort embedded text tracks exposed by Android MediaExtractor.
+          AI features: user-provided Gemini API key, resumable batches, progress, retry, timestamp-preserving SRT export.
+          PGS/VobSub image subtitle tracks are not OCR converted; embedded cue end time can be approximate.
           Universal APK workflow targets ARM64, ARMv7, x86, and x86_64.
           INFO
-          (cd "$RUNNER_TEMP" && zip -qr "$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Full-Source.zip" "VLC-Android-3.7.1-Stable-Full-Source")
+          (cd "$RUNNER_TEMP" && zip -qr "$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source.zip" "VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source")
 
           printf 'sdk.dir=%s\nandroid.ndkFullVersion=%s\n' "$ANDROID_HOME" "$NDK_VERSION" > "$SRC/local.properties"
           # Debug uses the published LibVLC AAR; this placeholder is only for Gradle's included Dev project.
@@ -140,10 +160,11 @@ jobs:
             unzip -Z -1 "$APK" | grep -q "^lib/$ABI/"
           done
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
-          cp "$APK" "$RUNNER_TEMP/vlc-apk/VLC-Android-3.7.1-Stable-Universal-Release.apk"
+          cp "$APK" "$RUNNER_TEMP/vlc-apk/VLC-Android-3.7.1-Stable-Gemini-AI-Universal-Release.apk"
           {
             echo "Source: official videolan/vlc-android tag ${UPSTREAM_TAG}"
             echo "Variant: signedRelease; stable orange/red icon"
+            echo "Features: Gemini subtitle translate, resume, progress, retry, SRT export"
             echo "ABI: arm64-v8a, armeabi-v7a, x86, x86_64"
             echo "Signing: temporary local CI key (not VideoLAN Play Store signing key)"
           } > "$RUNNER_TEMP/vlc-apk/BUILD-SOURCE.txt"
@@ -152,7 +173,7 @@ jobs:
       - name: Upload stable universal signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: VLC-Android-3.7.1-Stable-OriginalTheme-NextPrev-Universal-Release-APK
+          name: VLC-Android-3.7.1-Stable-Gemini-AI-NextPrev-Universal-Release-APK
           path: ${{ runner.temp }}/vlc-apk/*
           if-no-files-found: error
           retention-days: 14
@@ -160,7 +181,7 @@ jobs:
       - name: Upload stable full source ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: VLC-Android-3.7.1-Stable-Full-Source-ZIP
+          name: VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source-ZIP
           path: ${{ runner.temp }}/VLC-Android-3.7.1-Stable-Full-Source.zip
           if-no-files-found: error
           retention-days: 14
