@@ -46,10 +46,10 @@ jobs:
         run: |
           set -euo pipefail
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager --install \\
-            'platform-tools' \\
-            'platforms;android-36' \\
-            'build-tools;36.0.0' \\
+          sdkmanager --install \
+            'platform-tools' \
+            'platforms;android-36' \
+            'build-tools;36.0.0' \
             "ndk;${NDK_VERSION}"
 
       - name: Fetch official VLC Android stable source and apply custom patch
@@ -63,10 +63,10 @@ jobs:
           git -C "$SRC" fetch --depth=1 origin "refs/tags/${UPSTREAM_TAG}"
           git -C "$SRC" checkout --detach FETCH_HEAD
 
-          # The repository stores a compressed patch to keep GitHub Contents API payloads small.
+          # Decode and validate the combined patch before applying it.
           PATCH="$RUNNER_TEMP/vlc-ai-subtitle.patch"
-          base64 --decode "$GITHUB_WORKSPACE/patches/vlc-ai-subtitle.patch.gz.b64" | gzip -d > "$PATCH"
-          gzip -t < <(base64 --decode "$GITHUB_WORKSPACE/patches/vlc-ai-subtitle.patch.gz.b64") 2>/dev/null || true
+          base64 --decode "$GITHUB_WORKSPACE/patches/vlc-ai-subtitle.patch.gz.b64" | gzip -dc > "$PATCH"
+          test -s "$PATCH"
           git -C "$SRC" apply --check "$PATCH"
           git -C "$SRC" apply "$PATCH"
 
@@ -98,12 +98,11 @@ jobs:
           INFO
           (cd "$RUNNER_TEMP" && zip -qr "$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source.zip" "VLC-Android-3.7.1-Stable-Gemini-AI-Source")
 
-          printf 'sdk.dir=%s\\nandroid.ndkFullVersion=%s\\n' "$ANDROID_HOME" "$NDK_VERSION" > "$SRC/local.properties"
+          printf 'sdk.dir=%s\nandroid.ndkFullVersion=%s\n' "$ANDROID_HOME" "$NDK_VERSION" > "$SRC/local.properties"
           # Release uses the published LibVLC AAR; this placeholder is for Gradle's included Dev project.
           mkdir -p "$SRC/libvlcjni/libvlc"
-          printf '%s\\n' '// Empty placeholder: the selected Release variant uses the published LibVLC AAR.' > "$SRC/libvlcjni/libvlc/build.gradle"
+          printf '%s\n' '// Empty placeholder: the selected Release variant uses the published LibVLC AAR.' > "$SRC/libvlcjni/libvlc/build.gradle"
           echo "VLC_SOURCE_DIR=$SRC" >> "$GITHUB_ENV"
-          echo "VLC_SOURCE_PACKAGE_ZIP=$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Gemini-AI-Full-Source.zip" >> "$GITHUB_ENV"
 
       - name: Set up Gradle 8.13
         uses: gradle/actions/setup-gradle@v4
@@ -114,9 +113,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          keytool -genkeypair -v -keystore "$RUNNER_TEMP/vlc-stable-release.keystore" \\
-            -storepass android -keypass android -alias androiddebugkey \\
-            -keyalg RSA -keysize 2048 -validity 10000 \\
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/vlc-stable-release.keystore" \
+            -storepass android -keypass android -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
             -dname "CN=VLC Stable Local Build,O=OpenAI,C=US"
           echo "VLC_SIGNING_KEY=$RUNNER_TEMP/vlc-stable-release.keystore" >> "$GITHUB_ENV"
 
@@ -124,11 +123,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle --no-daemon --stacktrace --max-workers=2 \\
-            -PkeyStoreFile="$VLC_SIGNING_KEY" \\
-            -Pstorealias=androiddebugkey \\
-            -Pstorepwd=android \\
-            -p "$VLC_SOURCE_DIR" \\
+          gradle --no-daemon --stacktrace --max-workers=2 \
+            -PkeyStoreFile="$VLC_SIGNING_KEY" \
+            -Pstorealias=androiddebugkey \
+            -Pstorepwd=android \
+            -p "$VLC_SOURCE_DIR" \
             :application:app:assembleSignedRelease
 
       - name: Verify stable Release version, icon, signature and all four ABIs
@@ -140,7 +139,7 @@ jobs:
           mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' -size +0c | sort)
           if [ "${#APKS[@]}" -ne 1 ]; then
             echo "Expected one universal signedRelease APK, found ${#APKS[@]}"
-            printf '%s\\\\n' "${APKS[@]}"
+            printf '%s\n' "${APKS[@]}"
             exit 1
           fi
           APK="${APKS[0]}"
