@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build VLC Android 3.7.1 Stable Universal Debug APK
+    name: Build VLC Android 3.7.1 Stable Universal Release APK
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -65,6 +65,11 @@ jobs:
           git -C "$SRC" apply --check "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
           git -C "$SRC" apply "$GITHUB_WORKSPACE/patches/vlc-next-prev.patch"
 
+          # Use the stable Release launcher assets (orange/red cone), not the green Debug flavor.
+          grep -q '@color/orange500' "$SRC/application/resources/src/main/res/drawable/ic_launcher_foreground.xml"
+          # Keep Release as one universal APK rather than four ABI split APKs.
+          sed -i 's/enable = isReleaseBuild/enable = false/' "$SRC/application/app/build.gradle"
+
           # Package the exact stable source tree with the custom patch applied.
           SOURCE_PACKAGE="$RUNNER_TEMP/VLC-Android-3.7.1-Stable-Full-Source"
           mkdir -p "$SOURCE_PACKAGE/project/patches" "$SOURCE_PACKAGE/project/.github/workflows"
@@ -75,6 +80,7 @@ jobs:
           cp "$GITHUB_WORKSPACE/.github/workflows/build-apk.yml" "$SOURCE_PACKAGE/project/.github/workflows/"
           cat > "$SOURCE_PACKAGE/SOURCE-INFO.txt" <<'INFO'
           Official VideoLAN VLC Android source tag: 3.7.1 (stable).
+          Build variant: signedRelease (stable orange/red launcher icon; not green Debug flavor).
           Customization: original VLC theme retained; Next/Previous video navigation patch applied.
           Universal APK workflow targets ARM64, ARMv7, x86, and x86_64.
           INFO
@@ -91,15 +97,28 @@ jobs:
         with:
           gradle-version: '8.13'
 
-      - name: Build stable universal debug APK
+      - name: Create temporary signing key for installable stable Release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v -keystore "$RUNNER_TEMP/vlc-stable-release.keystore" \
+            -storepass android -keypass android -alias androiddebugkey \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=VLC Stable Local Build,O=OpenAI,C=US"
+          echo "VLC_SIGNING_KEY=$RUNNER_TEMP/vlc-stable-release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build stable universal signed Release APK
         shell: bash
         run: |
           set -euo pipefail
           gradle --no-daemon --stacktrace --max-workers=2 \
+            -PkeyStoreFile="$VLC_SIGNING_KEY" \
+            -Pstorealias=androiddebugkey \
+            -Pstorepwd=android \
             -p "$VLC_SOURCE_DIR" \
-            :application:app:assembleDebug
+            :application:app:assembleSignedRelease
 
-      - name: Verify stable version and all four ABIs
+      - name: Verify stable Release version, icon, signature and all four ABIs
         shell: bash
         run: |
           set -euo pipefail
@@ -107,7 +126,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/vlc-apk"
           mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' -size +0c | sort)
           if [ "${#APKS[@]}" -ne 1 ]; then
-            echo "Expected one universal Debug APK, found ${#APKS[@]}"
+            echo "Expected one universal signedRelease APK, found ${#APKS[@]}"
             printf '%s\\n' "${APKS[@]}"
             exit 1
           fi
@@ -115,21 +134,25 @@ jobs:
           AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
           BADGING="$("$AAPT" dump badging "$APK")"
           echo "$BADGING" | grep -q "versionName='3.7.1'"
-          echo "$BADGING" | grep -q "package: name='org.videolan.vlc.debug'"
+          echo "$BADGING" | grep -q "package: name='org.videolan.vlc'"
+          grep -q '@color/orange500' "$VLC_SOURCE_DIR/application/resources/src/main/res/drawable/ic_launcher_foreground.xml"
           for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
             unzip -Z -1 "$APK" | grep -q "^lib/$ABI/"
           done
-          cp "$APK" "$RUNNER_TEMP/vlc-apk/VLC-Android-3.7.1-Stable-Universal-Debug.apk"
+          apksigner verify "$APK"
+          cp "$APK" "$RUNNER_TEMP/vlc-apk/VLC-Android-3.7.1-Stable-Universal-Release.apk"
           {
             echo "Source: official videolan/vlc-android tag ${UPSTREAM_TAG}"
+            echo "Variant: signedRelease; stable orange/red icon"
             echo "ABI: arm64-v8a, armeabi-v7a, x86, x86_64"
+            echo "Signing: temporary local CI key (not VideoLAN Play Store signing key)"
           } > "$RUNNER_TEMP/vlc-apk/BUILD-SOURCE.txt"
           (cd "$RUNNER_TEMP/vlc-apk" && sha256sum *.apk)
 
-      - name: Upload stable universal debug APK
+      - name: Upload stable universal signed Release APK
         uses: actions/upload-artifact@v4
         with:
-          name: VLC-Android-3.7.1-Stable-OriginalTheme-NextPrev-Universal-Debug-APK
+          name: VLC-Android-3.7.1-Stable-OriginalTheme-NextPrev-Universal-Release-APK
           path: ${{ runner.temp }}/vlc-apk/*
           if-no-files-found: error
           retention-days: 14
