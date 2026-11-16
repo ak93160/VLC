@@ -208,6 +208,10 @@ jobs:
           PY
 
           # Apply the VLC-native extractor to the AI activity after the stable AI patch.
+          AI_ACTIVITY="$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
+          # Normalize the Kotlin TextView setter exactly as in the verified Build #29 source.
+          sed -i 's/singleLine = true/setSingleLine(true)/g' "$AI_ACTIVITY"
+          test "$(grep -c 'setSingleLine(true)' "$AI_ACTIVITY")" -eq 3
           NATIVE_PATCH_B64="$GITHUB_WORKSPACE/native/native-subtitle-extractor.patch.gz.b64"
           NATIVE_PATCH="$RUNNER_TEMP/vlc-native-subtitle-extractor.patch"
           base64 --decode "$NATIVE_PATCH_B64" | gzip -dc > "$NATIVE_PATCH"
