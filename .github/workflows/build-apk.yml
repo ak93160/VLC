@@ -219,6 +219,10 @@ jobs:
           git -C "$SRC" apply --check "$NATIVE_PATCH"
           git -C "$SRC" apply "$NATIVE_PATCH"
           AI_ACTIVITY="$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
+          # SubtitleCue stores the source text in `original`, not `text`.
+          sed -i 's/append(cue\.text)/append(cue.original)/g' "$AI_ACTIVITY"
+          grep -q 'append(cue.original)' "$AI_ACTIVITY"
+          ! grep -q 'append(cue.text)' "$AI_ACTIVITY"
           grep -q 'extractWithVlcNativeDecoder' "$AI_ACTIVITY"
           grep -q 'scodec=t140,senc=t140' "$AI_ACTIVITY"
           ! grep -q 'android.media.MediaExtractor' "$AI_ACTIVITY"
