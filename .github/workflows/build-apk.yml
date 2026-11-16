@@ -32,6 +32,8 @@ jobs:
     steps:
       - name: Checkout this repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -63,13 +65,17 @@ jobs:
           git -C "$SRC" remote add origin https://github.com/videolan/vlc-android.git
           git -C "$SRC" fetch --depth=1 origin "refs/tags/${UPSTREAM_TAG}"
           git -C "$SRC" checkout --detach FETCH_HEAD
-          # Reassemble the exact gzip/base64 patch from sorted source-control chunks.
+          # Build #29 is the last verified complete AI-subtitle patch. Build #30
+          # replaced the 25 chunks but truncated ai-patch-08.txt, so read the
+          # known-good patch payload from its verified source commit instead.
+          PATCH_SOURCE_COMMIT="829ec3c0d9facad8594b799765831f4a3946c281"
           PATCH_B64="$RUNNER_TEMP/vlc-ai-subtitle.patch.gz.b64"
           PATCH="$RUNNER_TEMP/vlc-ai-subtitle.patch"
           : > "$PATCH_B64"
           PART_COUNT=0
           for PART in "$GITHUB_WORKSPACE"/patch-parts/ai-patch-*.txt; do
-            cat "$PART" >> "$PATCH_B64"
+            RELATIVE_PATH="${PART#"$GITHUB_WORKSPACE"/}"
+            git -C "$GITHUB_WORKSPACE" show "$PATCH_SOURCE_COMMIT:$RELATIVE_PATH" >> "$PATCH_B64"
             PART_COUNT=$((PART_COUNT + 1))
           done
           test "$PART_COUNT" -eq 25
@@ -77,6 +83,161 @@ jobs:
           test -s "$PATCH"
           git -C "$SRC" apply --check "$PATCH"
           git -C "$SRC" apply "$PATCH"
+
+          # Add the requested AI-translation controls to VLC Settings > Subtitles.
+          python3 - "$SRC" <<'PY'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1])
+
+          def replace_once(relative_path, old, new):
+              path = root / relative_path
+              data = path.read_text(encoding="utf-8")
+              if data.count(old) != 1:
+                  raise SystemExit(f"Expected exactly one match in {relative_path}; found {data.count(old)}")
+              path.write_text(data.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "application/vlc-android/res/xml/preferences_subtitles.xml",
+              "</androidx.preference.PreferenceScreen>",
+              """    <PreferenceCategory android:title="@string/ai_subtitle_settings_category">
+                  <EditTextPreference
+                      android:key="ai_gemini_api_key"
+                      android:persistent="false"
+                      android:inputType="textPassword"
+                      android:title="@string/ai_subtitle_api_key_title"
+                      android:dialogTitle="@string/ai_subtitle_api_key_title"
+                      android:dialogMessage="@string/ai_subtitle_api_key_message" />
+                  <EditTextPreference
+                      android:defaultValue="Hindi"
+                      android:key="ai_subtitle_target_language"
+                      android:summary="%s"
+                      android:title="@string/ai_subtitle_target_language_title"
+                      android:dialogTitle="@string/ai_subtitle_target_language_title" />
+                  <EditTextPreference
+                      android:defaultValue="gemini-3.8-flash"
+                      android:key="ai_subtitle_model"
+                      android:summary="%s"
+                      android:title="@string/ai_subtitle_model_title"
+                      android:dialogTitle="@string/ai_subtitle_model_title" />
+                  <CheckBoxPreference
+                      android:defaultValue="false"
+                      android:key="ai_subtitle_dual_language"
+                      android:title="@string/ai_subtitle_dual_language_title"
+                      android:summary="@string/ai_subtitle_dual_language_summary"
+                      app:singleLineTitle="false" />
+              </PreferenceCategory>
+
+          </androidx.preference.PreferenceScreen>"""
+          )
+
+          strings = """    <string name="ai_subtitle_settings_category">AI subtitle translation</string>
+          <string name="ai_subtitle_api_key_title">Gemini API key</string>
+          <string name="ai_subtitle_api_key_message">Your key is stored using Android Keystore encryption. It is not saved as plain text in preferences.</string>
+          <string name="ai_subtitle_api_key_not_set">No API key saved</string>
+          <string name="ai_subtitle_api_key_saved">API key saved securely</string>
+          <string name="ai_subtitle_target_language_title">Default translation language</string>
+          <string name="ai_subtitle_model_title">Gemini model</string>
+          <string name="ai_subtitle_dual_language_title">Show original and translated subtitles</string>
+          <string name="ai_subtitle_dual_language_summary">Display the original line together with its translation</string>
+          """
+          path = root / "application/resources/src/main/res/values/strings.xml"
+          data = path.read_text(encoding="utf-8")
+          if "ai_subtitle_settings_category" in data:
+              raise SystemExit("AI subtitle settings strings already exist; refusing to duplicate them")
+          if data.count("</resources>") != 1:
+              raise SystemExit("Could not locate one resources closing tag")
+          path.write_text(data.replace("</resources>", strings + "\n</resources>", 1), encoding="utf-8")
+
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/preferences/PreferencesSubtitles.kt",
+              "import androidx.preference.CheckBoxPreference\n",
+              "import androidx.preference.CheckBoxPreference\nimport androidx.preference.EditTextPreference\n"
+          )
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/preferences/PreferencesSubtitles.kt",
+              "import org.videolan.vlc.gui.helpers.restartMediaPlayer\n",
+              "import org.videolan.vlc.gui.helpers.restartMediaPlayer\nimport org.videolan.vlc.gui.video.ai.GeminiApiKeyStore\n"
+          )
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/preferences/PreferencesSubtitles.kt",
+              """        updatePreferredSubtitleTrack()
+                  prepareLocaleList()
+                  managePreferenceVisibilities()
+          """,
+              """        updatePreferredSubtitleTrack()
+                  prepareLocaleList()
+                  setupAiSubtitlePreferences()
+                  managePreferenceVisibilities()
+          """
+          )
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/preferences/PreferencesSubtitles.kt",
+              "    private fun resetAll() {",
+              """    private fun setupAiSubtitlePreferences() {
+                  val apiKeyPreference = findPreference<EditTextPreference>("ai_gemini_api_key") ?: return
+                  fun updateApiKeySummary() {
+                      apiKeyPreference.summary = getString(
+                          if (GeminiApiKeyStore.load(requireContext()).isNullOrBlank())
+                              R.string.ai_subtitle_api_key_not_set
+                          else R.string.ai_subtitle_api_key_saved
+                      )
+                  }
+                  apiKeyPreference.setOnBindEditTextListener { editText ->
+                      editText.inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                          android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                  }
+                  updateApiKeySummary()
+                  apiKeyPreference.setOnPreferenceChangeListener { _, newValue ->
+                      val key = (newValue as? String).orEmpty().trim()
+                      try {
+                          if (key.isBlank()) GeminiApiKeyStore.clear(requireContext())
+                          else GeminiApiKeyStore.save(requireContext(), key)
+                          updateApiKeySummary()
+                      } catch (_: Exception) {
+                          // Keep the previous securely stored key when saving fails.
+                      }
+                      false // Never persist the API key in ordinary SharedPreferences.
+                  }
+              }
+
+              private fun resetAll() {"""
+          )
+
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
+              "import androidx.lifecycle.lifecycleScope\n",
+              "import androidx.lifecycle.lifecycleScope\nimport androidx.preference.PreferenceManager\n"
+          )
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
+              """        apiKeyInput.setText(GeminiApiKeyStore.load(this).orEmpty())
+                  restoreSelection()
+          """,
+              """        apiKeyInput.setText(GeminiApiKeyStore.load(this).orEmpty())
+                  val aiPreferences = PreferenceManager.getDefaultSharedPreferences(this)
+                  targetLanguageInput.setText(aiPreferences.getString("ai_subtitle_target_language", "Hindi"))
+                  modelInput.setText(aiPreferences.getString("ai_subtitle_model", AiSubtitleTranslationWorker.DEFAULT_MODEL))
+                  dualLanguage.isChecked = aiPreferences.getBoolean("ai_subtitle_dual_language", false)
+                  restoreSelection()
+          """
+          )
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
+              """        val language = targetLanguageInput.text.toString().trim().ifBlank { "Hindi" }
+                  val request = OneTimeWorkRequestBuilder<AiSubtitleTranslationWorker>()
+          """,
+              """        val language = targetLanguageInput.text.toString().trim().ifBlank { "Hindi" }
+                  PreferenceManager.getDefaultSharedPreferences(this).edit()
+                      .putString("ai_subtitle_target_language", language)
+                      .putString("ai_subtitle_model", modelInput.text.toString().trim().ifBlank { AiSubtitleTranslationWorker.DEFAULT_MODEL })
+                      .putBoolean("ai_subtitle_dual_language", dualLanguage.isChecked)
+                      .apply()
+                  val request = OneTimeWorkRequestBuilder<AiSubtitleTranslationWorker>()
+          """
+          )
+          PY
 
           # Use the Android TextView setter explicitly; Kotlin does not expose this as a synthetic property here.
           AI_ACTIVITY="$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
