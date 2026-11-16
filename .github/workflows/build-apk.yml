@@ -248,8 +248,7 @@ jobs:
               }""",
               """    private fun isTextSubtitleMime(mime: String): Boolean {
                   val value = mime.lowercase(Locale.ROOT).substringBefore(';').trim()
-                  // Android vendors use several aliases for the same textual subtitle formats.
-                  // Do not include bitmap PGS/VobSub or binary CEA tracks: they need OCR/decoding.
+                  // Accept common Android aliases for text subtitles; bitmap PGS/VobSub still need OCR.
                   return value.startsWith("text/") ||
                       value.contains("subrip") || value.contains("srt") ||
                       value.contains("ttml") || value.contains("stpp") ||
