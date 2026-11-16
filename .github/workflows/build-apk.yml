@@ -237,6 +237,44 @@ jobs:
                   val request = OneTimeWorkRequestBuilder<AiSubtitleTranslationWorker>()
           """
           )
+
+          # Improve Android extractor compatibility and explain the actual limitation.
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
+              """    private fun isTextSubtitleMime(mime: String): Boolean {
+                  val value = mime.lowercase(Locale.ROOT)
+                  return value.startsWith("text/") || value.contains("subrip") || value.contains("ttml") ||
+                      value.contains("webvtt") || value.contains("quicktime-tx3g")
+              }""",
+              """    private fun isTextSubtitleMime(mime: String): Boolean {
+                  val value = mime.lowercase(Locale.ROOT).substringBefore(';').trim()
+                  // Android vendors use several aliases for the same textual subtitle formats.
+                  // Do not include bitmap PGS/VobSub or binary CEA tracks: they need OCR/decoding.
+                  return value.startsWith("text/") ||
+                      value.contains("subrip") || value.contains("srt") ||
+                      value.contains("ttml") || value.contains("stpp") ||
+                      value.contains("webvtt") || value.contains("mp4-vtt") ||
+                      value.contains("quicktime-tx3g") || value.contains("3gpp-tt") ||
+                      value.contains("x-ass") || value.contains("x-ssa")
+              }"""
+          )
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
+              """                progressText.text = "No supported embedded text subtitle track found. Choose an external SRT/VTT/ASS/SSA file."
+                  return@launch""",
+              """                progressText.text = "Android could not expose a readable text subtitle track from this video. It may contain bitmap PGS/VobSub subtitles, or a format Android cannot demux. VLC can play some tracks that Android cannot extract. Open VLC > Tools > Media Information > Tracks and share the track details so the correct extractor can be added. External SRT/VTT/ASS/SSA files remain supported."
+                  return@launch"""
+          )
+          replace_once(
+              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
+              """            setSingleLine(true)
+          }
+          root.addView(apiKeyInput, matchWidth())""",
+              """            setSingleLine(true)
+              transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
+          }
+          root.addView(apiKeyInput, matchWidth())"""
+          )
           PY
 
           # Use the Android TextView setter explicitly; Kotlin does not expose this as a synthetic property here.
