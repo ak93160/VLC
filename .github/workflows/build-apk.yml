@@ -315,14 +315,24 @@ jobs:
           APK="${APKS[0]}"
           AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt"
           BADGING="$("$AAPT" dump badging "$APK")"
+          printf '%s\n' "$BADGING" | tee "$RUNNER_TEMP/build-diagnostics/apk-badging.txt"
           echo "$BADGING" | grep -q "versionName='3.7.1'"
           echo "$BADGING" | grep -q "package: name='org.videolan.vlc'"
           grep -q '@color/orange500' "$VLC_SOURCE_DIR/application/resources/src/main/res/drawable/ic_launcher_foreground.xml"
+          # Confirm the final APK really contains a resolvable launcher icon, not only that
+          # the unmerged source XML happens to contain the VLC orange color.
+          APP_ICON_LINE="$(printf '%s\n' "$BADGING" | grep -E '^application-icon(-[0-9]+)?:' | head -n 1)"
+          test -n "$APP_ICON_LINE"
+          APP_ICON_PATH="$(printf '%s\n' "$APP_ICON_LINE" | sed -E "s/^[^:]+:'([^']+)'.*/\\1/")"
+          test -n "$APP_ICON_PATH"
+          unzip -Z -1 "$APK" | grep -Fxq "$APP_ICON_PATH"
           for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
             unzip -Z -1 "$APK" | grep -q "^lib/$ABI/"
           done
-          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/zipalign" -c -v 4 "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
           cp "$APK" "$RUNNER_TEMP/vlc-apk/VLC-Android-3.7.1-Stable-Gemini-AI-Universal-Release.apk"
+          echo "VLC_APK_PATH=$APK" >> "$GITHUB_ENV"
           {
             echo "Source: official videolan/vlc-android tag ${UPSTREAM_TAG}"
             echo "Variant: signedRelease; stable orange/red icon"
@@ -332,6 +342,19 @@ jobs:
             echo "Signing: temporary local CI key (not VideoLAN Play Store signing key)"
           } > "$RUNNER_TEMP/vlc-apk/BUILD-SOURCE.txt"
           (cd "$RUNNER_TEMP/vlc-apk" && sha256sum *.apk)
+
+      - name: Verify install on Android 14 emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            adb install "$VLC_APK_PATH"
+            adb shell pm path org.videolan.vlc
 
       - name: Upload stable universal signed Release APK
         uses: actions/upload-artifact@v4
