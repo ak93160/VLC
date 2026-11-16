@@ -233,6 +233,10 @@ jobs:
           test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/GeminiApiKeyStore.kt"
           ! grep -q 'singleLine = true' "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
           grep -q 'setSingleLine(true)' "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
+          # Preserve the exact post-patch Kotlin context and decoded native patch in CI diagnostics.
+          mkdir -p "$RUNNER_TEMP/build-diagnostics"
+          nl -ba "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt" | sed -n '380,410p' > "$RUNNER_TEMP/build-diagnostics/AiSubtitleTranslateActivity-lines-380-410.txt"
+          cp "$NATIVE_PATCH" "$RUNNER_TEMP/build-diagnostics/vlc-native-subtitle-extractor.patch"
           # Keep Release as one universal APK rather than four ABI split APKs.
           sed -i 's/enable = isReleaseBuild/enable = false/' "$SRC/application/app/build.gradle"
 
