@@ -78,12 +78,19 @@ jobs:
           git -C "$SRC" apply --check "$PATCH"
           git -C "$SRC" apply "$PATCH"
 
+          # Kotlin compatibility fix for Android EditText single-line flags.
+          FIX_PATCH="$GITHUB_WORKSPACE/patches/vlc-ai-subtitle-compile-fix.patch"
+          git -C "$SRC" apply --check "$FIX_PATCH"
+          git -C "$SRC" apply "$FIX_PATCH"
+
           # Use the stable Release launcher assets (orange/red cone), not the green Debug flavor.
           grep -q '@color/orange500' "$SRC/application/resources/src/main/res/drawable/ic_launcher_foreground.xml"
           test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
           test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslationWorker.kt"
           test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/GeminiSubtitleClient.kt"
           test -f "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/GeminiApiKeyStore.kt"
+          ! grep -q 'singleLine = true' "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
+          grep -q 'setSingleLine(true)' "$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
           # Keep Release as one universal APK rather than four ABI split APKs.
           sed -i 's/enable = isReleaseBuild/enable = false/' "$SRC/application/app/build.gradle"
 
@@ -93,6 +100,7 @@ jobs:
           cp -a "$SRC" "$SOURCE_PACKAGE/source"
           rm -rf "$SOURCE_PACKAGE/source/.git"
           cp "$PATCH" "$SOURCE_PACKAGE/project/patches/vlc-ai-subtitle.patch"
+          cp "$FIX_PATCH" "$SOURCE_PACKAGE/project/patches/"
           cp "$GITHUB_WORKSPACE/README.md" "$SOURCE_PACKAGE/project/"
           cp "$GITHUB_WORKSPACE/.github/workflows/build-apk.yml" "$SOURCE_PACKAGE/project/.github/workflows/"
           cat > "$SOURCE_PACKAGE/SOURCE-INFO.txt" <<'INFO'
