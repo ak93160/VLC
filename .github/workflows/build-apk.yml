@@ -205,80 +205,19 @@ jobs:
               private fun resetAll() {"""
           )
 
-          replace_once(
-              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
-              "import androidx.lifecycle.lifecycleScope\n",
-              "import androidx.lifecycle.lifecycleScope\nimport androidx.preference.PreferenceManager\n"
-          )
-          replace_once(
-              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
-              """        apiKeyInput.setText(GeminiApiKeyStore.load(this).orEmpty())
-                  restoreSelection()
-          """,
-              """        apiKeyInput.setText(GeminiApiKeyStore.load(this).orEmpty())
-                  val aiPreferences = PreferenceManager.getDefaultSharedPreferences(this)
-                  targetLanguageInput.setText(aiPreferences.getString("ai_subtitle_target_language", "Hindi"))
-                  modelInput.setText(aiPreferences.getString("ai_subtitle_model", AiSubtitleTranslationWorker.DEFAULT_MODEL))
-                  dualLanguage.isChecked = aiPreferences.getBoolean("ai_subtitle_dual_language", false)
-                  restoreSelection()
-          """
-          )
-          replace_once(
-              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
-              """        val language = targetLanguageInput.text.toString().trim().ifBlank { "Hindi" }
-                  val request = OneTimeWorkRequestBuilder<AiSubtitleTranslationWorker>()
-          """,
-              """        val language = targetLanguageInput.text.toString().trim().ifBlank { "Hindi" }
-                  PreferenceManager.getDefaultSharedPreferences(this).edit()
-                      .putString("ai_subtitle_target_language", language)
-                      .putString("ai_subtitle_model", modelInput.text.toString().trim().ifBlank { AiSubtitleTranslationWorker.DEFAULT_MODEL })
-                      .putBoolean("ai_subtitle_dual_language", dualLanguage.isChecked)
-                      .apply()
-                  val request = OneTimeWorkRequestBuilder<AiSubtitleTranslationWorker>()
-          """
-          )
-
-          # Improve Android extractor compatibility and explain the actual limitation.
-          replace_once(
-              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
-              """    private fun isTextSubtitleMime(mime: String): Boolean {
-                  val value = mime.lowercase(Locale.ROOT)
-                  return value.startsWith("text/") || value.contains("subrip") || value.contains("ttml") ||
-                      value.contains("webvtt") || value.contains("quicktime-tx3g")
-              }""",
-              """    private fun isTextSubtitleMime(mime: String): Boolean {
-                  val value = mime.lowercase(Locale.ROOT).substringBefore(';').trim()
-                  // Accept common Android aliases for text subtitles; bitmap PGS/VobSub still need OCR.
-                  return value.startsWith("text/") ||
-                      value.contains("subrip") || value.contains("srt") ||
-                      value.contains("ttml") || value.contains("stpp") ||
-                      value.contains("webvtt") || value.contains("mp4-vtt") ||
-                      value.contains("quicktime-tx3g") || value.contains("3gpp-tt") ||
-                      value.contains("x-ass") || value.contains("x-ssa")
-              }"""
-          )
-          replace_once(
-              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
-              """                progressText.text = "No supported embedded text subtitle track found. Choose an external SRT/VTT/ASS/SSA file."
-                  return@launch""",
-              """                progressText.text = "Android could not expose a readable text subtitle track from this video. It may contain bitmap PGS/VobSub subtitles, or a format Android cannot demux. VLC can play some tracks that Android cannot extract. Open VLC > Tools > Media Information > Tracks and share the track details so the correct extractor can be added. External SRT/VTT/ASS/SSA files remain supported."
-                  return@launch"""
-          )
-          replace_once(
-              "application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt",
-              """            setSingleLine(true)
-          }
-          root.addView(apiKeyInput, matchWidth())""",
-              """            setSingleLine(true)
-              transformationMethod = android.text.method.PasswordTransformationMethod.getInstance()
-          }
-          root.addView(apiKeyInput, matchWidth())"""
-          )
           PY
 
-          # Use the Android TextView setter explicitly; Kotlin does not expose this as a synthetic property here.
+          # Apply the VLC-native extractor to the AI activity after the stable AI patch.
+          NATIVE_PATCH_B64="$GITHUB_WORKSPACE/native/native-subtitle-extractor.patch.gz.b64"
+          NATIVE_PATCH="$RUNNER_TEMP/vlc-native-subtitle-extractor.patch"
+          base64 --decode "$NATIVE_PATCH_B64" | gzip -dc > "$NATIVE_PATCH"
+          test -s "$NATIVE_PATCH"
+          git -C "$SRC" apply --check "$NATIVE_PATCH"
+          git -C "$SRC" apply "$NATIVE_PATCH"
           AI_ACTIVITY="$SRC/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt"
-          sed -i 's/singleLine = true/setSingleLine(true)/g' "$AI_ACTIVITY"
+          grep -q 'extractWithVlcNativeDecoder' "$AI_ACTIVITY"
+          grep -q 'scodec=t140,senc=t140' "$AI_ACTIVITY"
+          ! grep -q 'android.media.MediaExtractor' "$AI_ACTIVITY"
           test "$(grep -c 'setSingleLine(true)' "$AI_ACTIVITY")" -eq 3
           ! grep -q 'singleLine = true' "$AI_ACTIVITY"
 
@@ -299,6 +238,7 @@ jobs:
           cp -a "$SRC" "$SOURCE_PACKAGE/source"
           rm -rf "$SOURCE_PACKAGE/source/.git"
           cp "$PATCH" "$SOURCE_PACKAGE/project/patches/vlc-ai-subtitle.patch"
+          cp "$NATIVE_PATCH" "$SOURCE_PACKAGE/project/patches/vlc-native-subtitle-extractor.patch"
           cp "$GITHUB_WORKSPACE/README.md" "$SOURCE_PACKAGE/project/"
           cp "$GITHUB_WORKSPACE/.github/workflows/build-apk.yml" "$SOURCE_PACKAGE/project/.github/workflows/"
           cat > "$SOURCE_PACKAGE/SOURCE-INFO.txt" <<'INFO'
@@ -374,7 +314,8 @@ jobs:
           {
             echo "Source: official videolan/vlc-android tag ${UPSTREAM_TAG}"
             echo "Variant: signedRelease; stable orange/red icon"
-            echo "Features: Gemini subtitle translate, resume, progress, retry, SRT export"
+            echo "Features: Gemini subtitle translation; VLC-native T.140/RTP embedded text extraction; resume, progress, retry, SRT export"
+            echo "Timing: cue start from VLC/RTP PTS; cue ends inferred from the following cue or fallback duration"
             echo "ABI: arm64-v8a, armeabi-v7a, x86, x86_64"
             echo "Signing: temporary local CI key (not VideoLAN Play Store signing key)"
           } > "$RUNNER_TEMP/vlc-apk/BUILD-SOURCE.txt"
