@@ -1,0 +1,12 @@
+diff --git a/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt b/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt
+--- a/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt
++++ b/application/vlc-android/src/org/videolan/vlc/gui/video/ai/AiSubtitleTranslateActivity.kt
+@@
+-            singleLine = true
++            setSingleLine(true)
+@@
+-        targetLanguageInput = EditText(this).apply { setText("Hindi"); hint = "For example: Hindi, English, Arabic"; singleLine = true }
++        targetLanguageInput = EditText(this).apply { setText("Hindi"); hint = "For example: Hindi, English, Arabic"; setSingleLine(true) }
+@@
+-        modelInput = EditText(this).apply { setText(AiSubtitleTranslationWorker.DEFAULT_MODEL); hint = "gemini-3.8-flash"; singleLine = true }
++        modelInput = EditText(this).apply { setText(AiSubtitleTranslationWorker.DEFAULT_MODEL); hint = "gemini-3.8-flash"; setSingleLine(true) }
