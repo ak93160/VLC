@@ -352,7 +352,8 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            set -euo pipefail
+            # This action runs the script through /bin/sh, not bash.
+            set -eu
             adb install "$VLC_APK_PATH"
             adb shell pm path org.videolan.vlc
 
